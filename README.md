@@ -21,7 +21,7 @@ Retorna el mensaje de error de la ultima decdificacion.
 
 ### Encoding
 ```cs
-SET PROCEDURE json ADDITIVE
+SET PROCEDURE "C:\\path\\to\\json.prg" ADDITIVE
 
 LOCAL loTestObject
 
