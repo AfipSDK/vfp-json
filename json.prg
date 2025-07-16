@@ -85,10 +85,6 @@ return retval
 function json_getErrorMsg()
 return _json.cError
 	
-
-
-
-
 *
 * recordToJson()
 *
@@ -103,7 +99,7 @@ local nRecno,i,oObj, cRetVal
 	if alias()==''
 		return ''
 	endif
-	oObj = newObject('myObj')
+	oObj = newObject('JSONObject')
 	for i=1 to fcount()
 		oObj.set(Field(i),eval(Field(i)))
 	next
@@ -112,8 +108,6 @@ local nRecno,i,oObj, cRetVal
 		cRetVal = 'ERROR:'+json_getErrorMsg()
 	endif
 return cRetVal
-
-
 
 
 *
@@ -139,7 +133,7 @@ local nRecno,i,oObj, cRetVal,nRec
 	nRec = 1
 	dimension aInfo[1]
 	scan		
-		oObj = newObject('myObj')
+		oObj = newObject('JSONObject')
 		for i=1 to fcount()
 			oObj.set(Field(i),eval(Field(i)))
 		next
@@ -161,7 +155,6 @@ return cRetVal
 *
 * json class
 *
-*
 define class json as custom
 
 
@@ -175,7 +168,7 @@ define class json as custom
 	* Genera el codigo cJson para parametro que se manda
 	*
 	function encode(xExpr)
-	local cTipo
+		local cTipo
 		* Cuando se manda una arreglo, 
 		if type('ALen(xExpr)')=='N'
 			cTipo = 'A'
@@ -203,10 +196,31 @@ define class json as custom
 			return '"'+xExpr+'"'
 
 		case cTipo=='O'
+			LOCAL sClassName
+			sClassName = type('xExpr.__isjsonarray__')
+
+			if type('xExpr.__isjsonarray__')=='L'
+				* es un arreglo, recorrerlo usando los [ ] y macro
+				Local i,nTotElem,cJsonValue
+				cJsonValue = ''
+				nTotElem = xExpr.getsize()
+				For i=1 to nTotElem
+					cJsonValue = cJsonValue + ',' +  this.encode( xExpr.get(i) )
+				Next
+
+				return '[' + substr(cJsonValue,2) + ']'
+			endif
+
 			local cProp, cJsonValue, cRetVal, aProp[1]
 			=AMembers(aProp,xExpr)
 			cRetVal = ''
 			for each cProp in aProp
+				* Evitar la propiedad _aoriginalkeyssecureval
+				if lower(cProp)=='_aoriginalkeyssecureval'
+					* no procesar esta propiedad
+					loop
+				endif
+
 				*?? cProp,','
 				*? cRetVal
 				if type('xExpr.'+cProp)=='U' or cProp=='CLASS'
@@ -235,11 +249,11 @@ define class json as custom
 				if left(cProp,1)=='_'
 					cProp = substr(cProp,2)
 				endif
-				cRetVal = cRetVal + ',' + '"' + lower(cProp) + '":' + cJsonValue
+				cRetVal = cRetVal + ',' + '"' + (evaluate( 'xExpr._aoriginalkeyssecureval.'+cProp )) + '":' + cJsonValue
 			next
 			return '{' + substr(cRetVal,2) + '}'
 
-		case cTipo=='A'
+		case cTipo=='A' OR
 			local valor, cRetVal
 			cRetVal = ''	
 			for each valor in xExpr
@@ -250,8 +264,6 @@ define class json as custom
 		endcase
 
 	return ''
-
-
 
 
 
@@ -322,7 +334,7 @@ define class json as custom
 
 	function parseObject()
 	local retval, cPropName, xValue
-		retval = createObject('myObj')
+		retval = createObject('JSONObject')
 		this.nPos = this.nPos + 1 && Eat {
 		if this.getToken()<>'}'
 			do while .t.
@@ -357,7 +369,7 @@ define class json as custom
 
 	function parseArray()
 	local retVal, xValue
-		retval = createObject('MyArray')
+		retval = createObject('JSONArray')
 		this.nPos = this.nPos + 1	&& Eat [
 		if this.getToken() <> ']'
 			do while .t.
@@ -436,49 +448,135 @@ define class json as custom
 	return cRetVal
 					
 
-	**** Pendiente numeros con E
-	function parseNumber()
-	local nStartPos,c, isInt, cNumero
-		if not ( isdigit(this.getToken()) or this.getToken()=='-')
-			this.setError('Expected number literal')
-			return 0
-		endif
-		nStartPos = this.nPos
-		c = this.getChar()
-		if c == '-'
-			c = this.nextChar()
-		endif
-		if c == '0'
-			c = this.nextChar()
-		else
-			if isdigit(c)
-				c = this.nextChar()
-				do while isdigit(c)
-					c = this.nextChar()
-				enddo
-			else
-				this.setError('Expected digit when parsing number')
-				return 0
-			endif
-		endif
-		
-		isInt = .t.
-		if c=='.'
-			c = this.nextChar()
-			if isdigit(c)
-				c = this.nextChar()
-				isInt = .f.
-				do while isDigit(c)
-					c = this.nextChar()
-				enddo
-			else
-				this.setError('Expected digit following dot comma')
-				return 0
-			endif
-		endif
-		
-		cNumero = substr(this.cJson, nStartPos, this.nPos - nStartPos)
-	return val(cNumero)
+	
+    **** Pendiente numeros con E
+    FUNCTION parseNumber()
+        *****************************************************************************
+        * Author: Óscar Darío Botero Vargas
+        * Date:   Viernes 30 de abril de 2022
+        * Notes:  Reescribí esta función para que acepte las cadenas que se amolden
+        *         a la expresión regular:
+        *         (+|-)? dígito+ (\. dígito+ ((E|e)(+|-)? dígito+)? | (E|e)(+|-)? dígito+)? otro
+        *
+        *         Donde "dígito" es [0123456789] y "otro" depende del estado desde
+        *         el que parte el análisis.
+        *****************************************************************************
+
+        LOCAL regreseÚltimoSímbolo AS Logical
+        regreseÚltimoSímbolo = .F.
+
+        LOCAL ;
+            símbolo AS Character, ;
+            estado  AS VarBinary, ;
+            lexema  AS String
+
+        símbolo = this.getToken()
+        estado  = 0h00
+        lexema  = ''
+
+        DO WHILE .T.
+            DO CASE
+                CASE estado == 0h00
+                    DO CASE
+                        CASE INLIST(símbolo, '+', '-')
+                            IF símbolo == '-' THEN
+                                lexema = '-'
+                            ENDIF
+                            estado = 0h01
+                        CASE ISDIGIT(símbolo)
+                            lexema = símbolo
+                            estado = 0h02
+                        OTHERWISE
+                            this.setError('Expected a numeric literal or a sign literal')
+                            RETURN 0
+                    ENDCASE
+                CASE estado == 0h01
+                    IF ISDIGIT(símbolo) THEN
+                        lexema = lexema + símbolo
+                        estado = 0h02
+                    ELSE
+                        this.setError('Expected numeric literal')
+                        RETURN 0
+                    ENDIF
+                CASE estado == 0h02
+                    DO CASE
+                        CASE ISDIGIT(símbolo)
+                            lexema = lexema + símbolo
+                        CASE símbolo == '.'
+                            lexema = lexema + '.'
+                            estado = 0h03
+                        CASE INLIST(símbolo, 'E', 'e')
+                            lexema = lexema + 'E'
+                            estado = 0h05
+                        OTHERWISE
+                            IF regreseÚltimoSímbolo AND (this.nPos > 0) THEN
+                                this.nPos = this.nPos - 1
+                            ENDIF
+
+                            EXIT
+                    ENDCASE
+                CASE estado == 0h03
+                    IF ISDIGIT(símbolo) THEN
+                        lexema = lexema + símbolo
+                        estado = 0h04
+                    ELSE
+                        this.setError('Expected digit following dot')
+                        RETURN 0
+                    ENDIF
+                CASE estado == 0h04
+                    DO CASE
+                        CASE ISDIGIT(símbolo)
+                            lexema = lexema + símbolo
+                        CASE INLIST(símbolo, 'E', 'e')
+                            lexema = lexema + 'E'
+                            estado = 0h05
+                        OTHERWISE
+                            IF regreseÚltimoSímbolo AND (this.nPos > 0) THEN
+                                this.nPos = this.nPos - 1
+                            ENDIF
+
+                            EXIT
+                    ENDCASE
+                CASE estado == 0h05
+                    DO CASE
+                        CASE INLIST(símbolo, '+', '-')
+                            IF símbolo == '-' THEN
+                                lexema = lexema + '-'
+                            ENDIF
+                            estado = 0h06
+                        CASE ISDIGIT(símbolo)
+                            lexema = lexema + símbolo
+                            estado = 0h07
+                        OTHERWISE
+                            this.setError('Expected number following "E"')
+                            RETURN 0
+                    ENDCASE
+                CASE estado == 0h06
+                    IF ISDIGIT(símbolo) THEN
+                        lexema = lexema + símbolo
+                        estado = 0h07
+                    ELSE
+                        this.setError('Expected numeric literal in exponent')
+                        RETURN 0
+                    ENDIF
+                CASE estado == 0h07
+                    IF ISDIGIT(símbolo) THEN
+                        lexema = lexema + símbolo
+                    ELSE
+                        IF regreseÚltimoSímbolo AND (this.nPos > 0) THEN
+                            this.nPos = this.nPos - 1
+                        ENDIF
+
+                        EXIT
+                    ENDIF
+            ENDCASE
+
+            símbolo = this.nextChar()
+        ENDDO
+
+        SET DECIMALS TO 18
+        RETURN VAL(lexema)
+    ENDFUNC
 
 
 
@@ -522,18 +620,20 @@ define class json as custom
 
 
 	function fixUnicode(cStr)
-		cStr = StrTran(cStr,'\u00e1','á')
-		cStr = StrTran(cStr,'\u00e9','é')
-		cStr = StrTran(cStr,'\u00ed','í')
-		cStr = StrTran(cStr,'\u00f3','ó')
-		cStr = StrTran(cStr,'\u00fa','ú')
-		cStr = StrTran(cStr,'\u00c1','Á')
-		cStr = StrTran(cStr,'\u00c9','É')
-		cStr = StrTran(cStr,'\u00cd','Í')
-		cStr = StrTran(cStr,'\u00d3','Ó')
-		cStr = StrTran(cStr,'\u00da','Ú')
-		cStr = StrTran(cStr,'\u00f1','ñ')
-		cStr = StrTran(cStr,'\u00d1','Ñ')
+		cStr = StrTran(cStr, '\u00e1', 'á')
+		cStr = StrTran(cStr, '\u00e9', 'é')
+		cStr = StrTran(cStr, '\u00ed', 'í')
+		cStr = StrTran(cStr, '\u00f3', 'ó')
+		cStr = StrTran(cStr, '\u00fa', 'ú')
+		cStr = StrTran(cStr, '\u00c1', 'Á')
+		cStr = StrTran(cStr, '\u00c9', 'É')
+		cStr = StrTran(cStr, '\u00cd', 'Í')
+		cStr = StrTran(cStr, '\u00d3', 'Ó')
+		cStr = StrTran(cStr, '\u00da', 'Ú')
+		cStr = StrTran(cStr, '\u00fc', 'ü')
+		cStr = StrTran(cStr, '\u00dc', 'Ü')
+		cStr = StrTran(cStr, '\u00f1', 'ñ')
+		cStr = StrTran(cStr, '\u00d1', 'Ñ')
 	return cStr
 
 
@@ -547,8 +647,9 @@ enddefine
 * 
 * class used to return an array
 *
-define class myArray as custom
+define class JSONArray as custom
 	nSize = 0
+	__isjsonarray__ = .t.
 	dimension array[1]
 
 	function add(xExpr)
@@ -572,7 +673,7 @@ enddefine
 * all properties are prefixed with 'prop' to permit property names like: error, init
 * that already exists like vfp methods
 *
-define class myObj as custom
+define class JSONObject as custom
 Hidden ;
 	ClassLibrary,Comment, ;
 	BaseClass,ControlCount, ;
@@ -582,7 +683,11 @@ Hidden ;
 	Tag,Top,WhatsThisHelpID,Width
 		
 	function set(cPropName, xValue)
-		cPropName = '_'+cPropName
+       * remember the original-case name before we prefix it:
+       LOCAL lcOrigKey
+       lcOrigKey = cPropName
+       cPropName = '_' + cPropName
+
 		do case
 		case type('ALen(xValue)')=='N'
 			* es un arreglo
@@ -599,6 +704,17 @@ Hidden ;
 		case type('this.'+cPropName)=='U'
 			* la propiedad no existe, definirla
 			this.addProperty(cPropName,@xValue)
+
+			IF lcOrigKey <> '_aoriginalkeyssecureval'
+
+				*?? record original key in aOriginalKeys ??*
+				IF type('this._aoriginalkeyssecureval') == 'U'
+					* first time: create the array property *
+					this.addProperty('_aoriginalkeyssecureval', createObject('JSONObject'))
+				ENDIF
+
+				this._aoriginalkeyssecureval.addProperty(lcOrigKey, lcOrigKey)
+			ENDIF
 			
 		otherwise
 			* actualizar la propiedad

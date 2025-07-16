@@ -1,42 +1,54 @@
-#VFPJSON
-JSON library for VFP.
-**WARNING** Too slow to used with large data
+# Visual FoxPro - JSON 
+
+Library to use JSON in Visual FoxPro
+
+## Functions
+
+`json_encode(xExpr)`
+
+Transform la expresion a un string en formato JSON
+
+`json_decode(cJson)`
+
+Transforma un string JSON a un objeto.
+
+`json_getErrorMsg()`
+
+Retorna el mensaje de error de la ultima decdificacion.
 
 
-**json_encode(xExpr)**
+### Examples
 
-Returns a string, that is the json of any expression passed.
+### Encoding
+```cs
+SET PROCEDURE json ADDITIVE
 
-**json_decode(cJson)**
+LOCAL loTestObject
 
-Returns an object, from the string passed.
+loTestObject = CREATEOBJECT("JSONObject")
+loTestObject.set("foo", "var")
+loTestObject.set("jhon", "doe")
+loTestObject.set("number_prop", 12345)
 
-**json_getErrorMsg()**
+* Add a JSONArray
+LOCAL loArrayProp
+loArrayProp = CREATEOBJECT("JSONArray")
+loTestObject.set("array_property", loArrayProp)
 
-Returns empty if no error found in last decode.
+	* Add a JSONObject to the array
+	LOCAL loArrayItem
+	loArrayItem = CREATEOBJECT("JSONObject")
+	loArrayProp.add(loArrayItem)
 
-**recordToJson()**
+	loArrayItem.set("item_boolean_prop", .T.)
 
-Returns the json representation for current record.
+LOCAL cJsonString
 
-**tableToJson()**
-
-Returns the json representation for current table
-Warning need to be changed for large table, because use dimension aInfo[reccount()]
-For large table should change to create the string record by record.
-
-
-###Examples
+cJsonString =  json_encode(oSmtp)
 ```
-set procedure json additive
 
-oPerson = json_decode(' { "name":"Ignacio" , "lastname":"Gutierrez", "age":33 } ')
-if not empty(json_getErrorMsg())
-	? 'Error in decode:'+json_getErrorMsg())
-	return
-endif
-? oPerson.get('name') , oPerson.get('lastname')
-
+### Decoding
+```cs
 obj = oJson.decode('{"jsonrpc":"1.0", "id":1, "method":"sumArray", "params":[3.1415,2.14,10],"version":1.0}')
 ? obj.get('jsonrpc'), obj._jsonrpc
 ? obj.get('id'), obj._id
@@ -49,7 +61,5 @@ cJson = ' {"server":"imap.gmail.com", "user":"billgates", "password":"melinda" ,
 oSmtp = json_decode(cJson)
 cJson =  json_encode(oSmtp)
 
-
-? json_encode(_screen)
 
 ```
